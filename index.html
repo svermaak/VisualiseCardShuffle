@@ -1,0 +1,366 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Card Position Tracking Over Shuffles</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+  <style>
+    :root { color-scheme: light dark; }
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 0; }
+    header { padding: 12px 16px; border-bottom: 1px solid #ccc; }
+    main { padding: 16px; display: flex; flex-direction: column; gap: 12px; min-height: 90vh; }
+
+    .controls { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+    #chart { flex: 1; min-height: 55vh; }
+
+    .pill { padding: 6px 10px; border: 1px solid #999; border-radius: 999px; background: transparent; cursor: pointer; }
+
+    /* Legend layout */
+    .legend { display: grid; gap: 8px; }
+    .legend-row {
+      display: grid;
+      grid-template-columns: 84px repeat(13, minmax(40px, 1fr));
+      align-items: center;
+      column-gap: 10px;
+    }
+    .legend-suit {
+      text-align: right;
+      font-weight: 600;
+      opacity: .9;
+      padding-right: 6px;
+      white-space: nowrap;
+      cursor: pointer;
+      user-select: none;
+    }
+    .legend-suit.off { opacity: .25; }
+
+    .legend-item {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      cursor: pointer;
+      user-select: none;
+      font-size: 13px;
+      justify-self: start;
+      opacity: .95;
+    }
+    .legend-item.off { opacity: .30; }
+    .swatch { width: 22px; height: 0; border-top: 3px solid currentColor; }
+
+    /* Suit colors */
+    .C { color: #1f7a1f; }   /* clubs */
+    .D { color: #cc3333; }   /* diamonds */
+    .H { color: #cc33cc; }   /* hearts */
+    .S { color: #2a6bcc; }   /* spades */
+
+    .bottom-bar { display: flex; justify-content: flex-end; gap: 8px; }
+  </style>
+</head>
+<body>
+<header><strong>Card Position Tracking Over Shuffles</strong></header>
+<main>
+  <div class="controls">
+    <label><input type="file" id="file" accept=".csv" /></label>
+    <label>Line width <input type="range" id="lw" min="0.5" max="3" step="0.5" value="1" /></label>
+    <button class="pill" id="savePng">Save PNG</button>
+    <button class="pill" id="saveSvg">Save SVG</button>
+  </div>
+
+  <div id="chart"></div>
+
+  <!-- Custom legend, four rows, one per suit -->
+  <div class="legend" id="legend"></div>
+
+  <div class="bottom-bar">
+    <button class="pill" id="showAll">Show All</button>
+    <button class="pill" id="hideAll">Hide All</button>
+  </div>
+</main>
+
+<script>
+  const chartDiv = document.getElementById('chart');
+  const fileInput = document.getElementById('file');
+  const lwInput = document.getElementById('lw');
+  const savePngBtn = document.getElementById('savePng');
+  const saveSvgBtn = document.getElementById('saveSvg');
+  const showAllBtn = document.getElementById('showAll');
+  const hideAllBtn = document.getElementById('hideAll');
+  const legendEl = document.getElementById('legend');
+
+  const SUITS = ['C','D','H','S'];
+  const SUIT_NAME = { C:'Clubs ♣', D:'Diamonds ♦', H:'Hearts ♥', S:'Spades ♠' };
+  const SUIT_SYM  = { C:'♣', D:'♦', H:'♥', S:'♠' };
+  const SUIT_COLOR = { C:'#1f7a1f', D:'#cc3333', H:'#cc33cc', S:'#2a6bcc' };
+  const RANKS = ['A','2','3','4','5','6','7','8','9','10','J','Q','K'];
+  const RANK_INDEX = Object.fromEntries(RANKS.map((r,i)=>[r,i]));
+
+  let traces = [];
+  let xLabels = [];
+  let xNumeric = [];
+  let yTickText = [];
+
+  const labelToIndex = new Map();          // "K♥" -> trace index
+  const visibleState = new Map();          // "K♥" -> boolean
+  const suitToIndices = { C:[], D:[], H:[], S:[] }; // suit -> [trace indexes]
+
+  fileInput.addEventListener('change', e => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    Papa.parse(file, { header: true, skipEmptyLines: true,
+      complete: r => renderFromRows(r.meta.fields, r.data) });
+  });
+
+  savePngBtn.addEventListener('click', () => Plotly.downloadImage(chartDiv, {format: 'png', width: 2000, height: 1200, filename: 'card-shuffles'}));
+  saveSvgBtn.addEventListener('click', () => Plotly.downloadImage(chartDiv, {format: 'svg', width: 2000, height: 1200, filename: 'card-shuffles'}));
+  lwInput.addEventListener('input', () => restyleWidths());
+  showAllBtn.addEventListener('click', () => setAllVisibility(true));
+  hideAllBtn.addEventListener('click', () => setAllVisibility(false));
+  window.addEventListener('resize', fitBottomMargin);
+
+  function setAllVisibility(on) {
+    if (!traces.length) return;
+    const vis = traces.map(() => on ? true : 'legendonly');
+    Plotly.restyle(chartDiv, { visible: vis }, traces.map((_,i)=>i));
+    for (const [label] of labelToIndex) visibleState.set(label, on);
+    syncLegendClasses();
+  }
+
+  function setSuitVisibility(suit, on) {
+    const idxs = suitToIndices[suit] || [];
+    if (!idxs.length) return;
+    Plotly.restyle(chartDiv, { visible: on ? true : 'legendonly' }, idxs);
+    // update per label state and legend classes
+    for (const idx of idxs) {
+      const label = traces[idx].name;
+      visibleState.set(label, on);
+    }
+    syncLegendClasses();
+    // update suit title style
+    const title = legendEl.querySelector(`.legend-suit[data-suit="${suit}"]`);
+    if (title) {
+      const anyOn = idxs.some(i => visibleState.get(traces[i].name));
+      title.classList.toggle('off', !anyOn);
+    }
+  }
+
+  function renderFromRows(headers, rows) {
+    const df = rows.map(row => {
+      const r = {};
+      for (const k of headers) r[k] = String(row[k] ?? '').trim();
+      return r;
+    });
+
+    const firstCol = headers[0];
+    const baseOrder = df.map(r => r[firstCol]);
+    yTickText = baseOrder.map(abbrevCard);
+
+    const cardsSet = new Set();
+    for (const r of df) for (const k of headers) if (r[k] !== '') cardsSet.add(r[k]);
+    const cards = Array.from(cardsSet);
+
+    cards.sort((a,b)=>{
+      const sa = detectSuit(a), sb = detectSuit(b);
+      if (sa !== sb) return SUITS.indexOf(sa) - SUITS.indexOf(sb);
+      const ra = RANK_INDEX[getRank(abbrevCard(a))];
+      const rb = RANK_INDEX[getRank(abbrevCard(b))];
+      return ra - rb;
+    });
+
+    const colPos = {};
+    df.forEach((row, idx) => {
+      for (const k of headers) {
+        const v = row[k];
+        if (!colPos[k]) colPos[k] = {};
+        if (v !== '' && !(v in colPos[k])) colPos[k][v] = idx;
+      }
+    });
+
+    xLabels = headers.slice();
+    xNumeric = headers.map((_, i) => i);
+
+    traces = [];
+    labelToIndex.clear();
+    visibleState.clear();
+    suitToIndices.C = []; suitToIndices.D = []; suitToIndices.H = []; suitToIndices.S = [];
+
+    const width = parseFloat(lwInput.value);
+
+    cards.forEach(card => {
+      const y = headers.map(h => {
+        const pos = colPos[h][card];
+        return Number.isInteger(pos) ? pos : null;
+      });
+      const suit = detectSuit(card);
+      const label = abbrevCard(card);
+      const color = SUIT_COLOR[suit];
+
+      const idx = traces.length;
+      traces.push({
+        type: 'scatter',
+        mode: 'lines',
+        x: xNumeric,
+        y,
+        line: { width, color },
+        name: label
+      });
+      labelToIndex.set(label, idx);
+      visibleState.set(label, true);
+      suitToIndices[suit].push(idx);
+    });
+
+    draw();
+    buildLegend();
+  }
+
+  function draw() {
+    const layout = {
+      margin: { l: 90, r: 20, t: 20, b: 60 },  // will be adjusted by fitBottomMargin
+      xaxis: {
+        title: 'Shuffle Number',
+        tickmode: 'array',
+        tickvals: xNumeric,
+        ticktext: xLabels,
+        tickangle: 45,
+        gridcolor: 'rgba(127,127,127,0.3)'
+      },
+      yaxis: {
+        title: 'Card',
+        tickmode: 'array',
+        tickvals: [...Array(52).keys()],
+        ticktext: yTickText,
+        gridcolor: 'rgba(127,127,127,0.3)',
+        autorange: false,
+        range: [-0.5, 51.5]
+      },
+      showlegend: false
+    };
+    Plotly.newPlot(chartDiv, traces, layout, {responsive: true, displaylogo: false})
+      .then(fitBottomMargin);
+  }
+
+  function restyleWidths() {
+    if (!traces.length) return;
+    const w = parseFloat(lwInput.value);
+    Plotly.restyle(chartDiv, { 'line.width': w }, traces.map((_, i) => i));
+  }
+
+  /* Legend */
+  function buildLegend() {
+    legendEl.innerHTML = '';
+    for (const suit of SUITS) {
+      const row = document.createElement('div');
+      row.className = 'legend-row';
+
+      const title = document.createElement('div');
+      title.className = `legend-suit ${suit}`;
+      title.dataset.suit = suit;
+      title.textContent = SUIT_NAME[suit];
+      // suit title click toggles all in the suit
+      title.addEventListener('click', () => {
+        const idxs = suitToIndices[suit];
+        const anyOn = idxs.some(i => visibleState.get(traces[i].name));
+        setSuitVisibility(suit, !anyOn);
+      });
+      row.appendChild(title);
+
+      for (const rank of RANKS) {
+        const label = `${rank}${SUIT_SYM[suit]}`;
+        const item = document.createElement('div');
+        item.className = `legend-item ${suit}`;
+        item.dataset.label = label;
+        item.dataset.suit = suit;
+
+        const exists = labelToIndex.has(label);
+        if (!exists) item.style.opacity = .12;
+
+        const sw = document.createElement('div');
+        sw.className = 'swatch';
+        const txt = document.createElement('div');
+        txt.textContent = label;
+
+        item.appendChild(sw);
+        item.appendChild(txt);
+        row.appendChild(item);
+
+        if (exists) {
+          item.addEventListener('click', () => toggle(label, item));
+          if (!visibleState.get(label)) item.classList.add('off');
+        } else {
+          item.style.pointerEvents = 'none';
+        }
+      }
+      legendEl.appendChild(row);
+    }
+    fitBottomMargin();
+  }
+
+  function toggle(label, itemEl) {
+    const idx = labelToIndex.get(label);
+    const nowOff = !itemEl.classList.contains('off');
+    itemEl.classList.toggle('off', nowOff);
+    visibleState.set(label, !nowOff);
+    Plotly.restyle(chartDiv, { visible: nowOff ? 'legendonly' : true }, [idx]);
+
+    // update suit title class based on any-on state
+    const suit = itemEl.dataset.suit;
+    const idxs = suitToIndices[suit];
+    const anyOn = idxs.some(i => visibleState.get(traces[i].name));
+    const title = legendEl.querySelector(`.legend-suit[data-suit="${suit}"]`);
+    if (title) title.classList.toggle('off', !anyOn);
+  }
+
+  function syncLegendClasses() {
+    for (const el of legendEl.querySelectorAll('[data-label]')) {
+      const label = el.dataset.label;
+      el.classList.toggle('off', visibleState.get(label) === false);
+    }
+    for (const suit of SUITS) {
+      const idxs = suitToIndices[suit];
+      const anyOn = idxs.some(i => visibleState.get(traces[i].name));
+      const title = legendEl.querySelector(`.legend-suit[data-suit="${suit}"]`);
+      if (title) title.classList.toggle('off', !anyOn);
+    }
+  }
+
+  /* Auto fit bottom margin to the legend height */
+  function fitBottomMargin() {
+    const legendH = legendEl.offsetHeight || 0;
+    const base = 40;      // x ticks and title
+    const padding = 20;   // breathing room
+    Plotly.relayout(chartDiv, { 'margin.b': base + legendH + padding });
+  }
+
+  /* Parsing helpers */
+  function detectSuit(card) {
+    const c = card.trim();
+    const lc = c.toLowerCase();
+    if (/[♣]/.test(c) || /\bclubs?\b/.test(lc) || /c$/.test(lc)) return 'C';
+    if (/[♦]/.test(c) || /\bdiamonds?\b/.test(lc) || /d$/.test(lc)) return 'D';
+    if (/[♥]/.test(c) || /\bhearts?\b/.test(lc) || /h$/.test(lc)) return 'H';
+    if (/[♠]/.test(c) || /\bspades?\b/.test(lc) || /s$/.test(lc)) return 'S';
+    return 'C';
+  }
+  function abbrevCard(card) {
+    const s = card.trim();
+    const suit = detectSuit(s);
+    const sym = SUIT_SYM[suit] || '';
+    const m = s.match(/(10|[2-9]|[JQKAjqka])/);
+    let rank = m ? m[0].toUpperCase() : '';
+    if (!rank) {
+      const word = s.toLowerCase().match(/ace|king|queen|jack/);
+      if (word) {
+        const map = { ace:'A', king:'K', queen:'Q', jack:'J' };
+        rank = map[word[0]] || '';
+      }
+    }
+    if (!rank) return s;
+    return rank + sym;
+  }
+  function getRank(label) {
+    return label.replace(/[♣♦♥♠]/g,'');
+  }
+</script>
+</body>
+</html>
