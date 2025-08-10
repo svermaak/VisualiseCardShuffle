@@ -55,7 +55,7 @@
     .H { color: #cc33cc; }   /* hearts */
     .S { color: #2a6bcc; }   /* spades */
 
-    .bottom-bar { display: flex; justify-content: flex-end; gap: 8px; }
+    .bottom-bar { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
   </style>
 </head>
 <body>
@@ -66,6 +66,7 @@
     <label>Line width <input type="range" id="lw" min="0.5" max="3" step="0.5" value="1" /></label>
     <button class="pill" id="savePng">Save PNG</button>
     <button class="pill" id="saveSvg">Save SVG</button>
+    <button class="pill" id="load114">APS #114</button>
   </div>
 
   <div id="chart"></div>
@@ -85,6 +86,7 @@
   const lwInput = document.getElementById('lw');
   const savePngBtn = document.getElementById('savePng');
   const saveSvgBtn = document.getElementById('saveSvg');
+  const load114Btn = document.getElementById('load114');
   const showAllBtn = document.getElementById('showAll');
   const hideAllBtn = document.getElementById('hideAll');
   const legendEl = document.getElementById('legend');
@@ -105,6 +107,7 @@
   const visibleState = new Map();          // "K♥" -> boolean
   const suitToIndices = { C:[], D:[], H:[], S:[] }; // suit -> [trace indexes]
 
+  /* Load CSV */
   fileInput.addEventListener('change', e => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -112,6 +115,40 @@
       complete: r => renderFromRows(r.meta.fields, r.data) });
   });
 
+  /* Number 114 generator, in browser */
+  load114Btn.addEventListener('click', () => {
+    const suits = ['S', 'D', 'C', 'H'];
+    const ranks = ['A','2','3','4','5','6','7','8','9','10','J','Q','K'];
+    const deck = [];
+    for (const suit of suits) for (const rank of ranks) deck.push(`${rank}${suit}`);
+
+    function mark_shuffle(d) {
+      const left = [];
+      let toggle = true;
+      for (const card of d) {
+        if (toggle) left.unshift(card);
+        else left.push(card);
+        toggle = !toggle;
+      }
+      return left;
+    }
+
+    const shuffles = [deck];
+    for (let i = 0; i < 12; i++) shuffles.push(mark_shuffle(shuffles[shuffles.length - 1]));
+
+    const headers = Array.from({length: 13}, (_, i) => `Shuffle ${i}`);
+    const rows = [];
+    for (let rowIdx = 0; rowIdx < 52; rowIdx++) {
+      const row = {};
+      for (let colIdx = 0; colIdx < headers.length; colIdx++) {
+        row[headers[colIdx]] = shuffles[colIdx][rowIdx];
+      }
+      rows.push(row);
+    }
+    renderFromRows(headers, rows);
+  });
+
+  /* Buttons */
   savePngBtn.addEventListener('click', () => Plotly.downloadImage(chartDiv, {format: 'png', width: 2000, height: 1200, filename: 'card-shuffles'}));
   saveSvgBtn.addEventListener('click', () => Plotly.downloadImage(chartDiv, {format: 'svg', width: 2000, height: 1200, filename: 'card-shuffles'}));
   lwInput.addEventListener('input', () => restyleWidths());
@@ -131,13 +168,11 @@
     const idxs = suitToIndices[suit] || [];
     if (!idxs.length) return;
     Plotly.restyle(chartDiv, { visible: on ? true : 'legendonly' }, idxs);
-    // update per label state and legend classes
     for (const idx of idxs) {
       const label = traces[idx].name;
       visibleState.set(label, on);
     }
     syncLegendClasses();
-    // update suit title style
     const title = legendEl.querySelector(`.legend-suit[data-suit="${suit}"]`);
     if (title) {
       const anyOn = idxs.some(i => visibleState.get(traces[i].name));
@@ -162,7 +197,7 @@
 
     cards.sort((a,b)=>{
       const sa = detectSuit(a), sb = detectSuit(b);
-      if (sa !== sb) return SUITS.indexOf(sa) - SUITS.indexOf(sb);
+      if (sa !== sb) return ['C','D','H','S'].indexOf(sa) - ['C','D','H','S'].indexOf(sb);
       const ra = RANK_INDEX[getRank(abbrevCard(a))];
       const rb = RANK_INDEX[getRank(abbrevCard(b))];
       return ra - rb;
@@ -257,7 +292,6 @@
       title.className = `legend-suit ${suit}`;
       title.dataset.suit = suit;
       title.textContent = SUIT_NAME[suit];
-      // suit title click toggles all in the suit
       title.addEventListener('click', () => {
         const idxs = suitToIndices[suit];
         const anyOn = idxs.some(i => visibleState.get(traces[i].name));
@@ -303,7 +337,6 @@
     visibleState.set(label, !nowOff);
     Plotly.restyle(chartDiv, { visible: nowOff ? 'legendonly' : true }, [idx]);
 
-    // update suit title class based on any-on state
     const suit = itemEl.dataset.suit;
     const idxs = suitToIndices[suit];
     const anyOn = idxs.some(i => visibleState.get(traces[i].name));
@@ -327,8 +360,8 @@
   /* Auto fit bottom margin to the legend height */
   function fitBottomMargin() {
     const legendH = legendEl.offsetHeight || 0;
-    const base = 40;      // x ticks and title
-    const padding = 20;   // breathing room
+    const base = 40;
+    const padding = 20;
     Plotly.relayout(chartDiv, { 'margin.b': base + legendH + padding });
   }
 
