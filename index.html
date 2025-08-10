@@ -66,7 +66,8 @@
     <label>Line width <input type="range" id="lw" min="0.5" max="3" step="0.5" value="1" /></label>
     <button class="pill" id="savePng">Save PNG</button>
     <button class="pill" id="saveSvg">Save SVG</button>
-    <button class="pill" id="load114">APS #114</button>
+    <button class="pill" id="load114">Number 114</button>
+    <button class="pill" id="loadFaro">Faro</button>
   </div>
 
   <div id="chart"></div>
@@ -87,6 +88,7 @@
   const savePngBtn = document.getElementById('savePng');
   const saveSvgBtn = document.getElementById('saveSvg');
   const load114Btn = document.getElementById('load114');
+  const loadFaroBtn = document.getElementById('loadFaro');
   const showAllBtn = document.getElementById('showAll');
   const hideAllBtn = document.getElementById('hideAll');
   const legendEl = document.getElementById('legend');
@@ -137,6 +139,37 @@
     for (let i = 0; i < 12; i++) shuffles.push(mark_shuffle(shuffles[shuffles.length - 1]));
 
     const headers = Array.from({length: 13}, (_, i) => `Shuffle ${i}`);
+    const rows = buildRowsFromShuffles(shuffles, headers);
+    renderFromRows(headers, rows);
+  });
+
+  /* Faro generator, in browser, perfect out faro, suits S H D C, 8 shuffles */
+  loadFaroBtn.addEventListener('click', () => {
+    const ranks = ['A','2','3','4','5','6','7','8','9','10','J','Q','K'];
+    const suits = ['S','H','D','C'];
+    const deck = [];
+    for (const s of suits) for (const r of ranks) deck.push(`${r}${s}`);
+
+    function faroShuffle(d) {
+      const half = d.length >> 1;
+      const out = [];
+      for (let i = 0; i < half; i++) {
+        out.push(d[i], d[i + half]);
+      }
+      return out;
+    }
+
+    const shuffles = [deck];
+    for (let i = 0; i < 8; i++) {
+      shuffles.push(faroShuffle(shuffles[shuffles.length - 1]));
+    }
+
+    const headers = Array.from({length: 9}, (_, i) => `Shuffle${i}`); // match your Python names
+    const rows = buildRowsFromShuffles(shuffles, headers);
+    renderFromRows(headers, rows);
+  });
+
+  function buildRowsFromShuffles(shuffles, headers) {
     const rows = [];
     for (let rowIdx = 0; rowIdx < 52; rowIdx++) {
       const row = {};
@@ -145,8 +178,8 @@
       }
       rows.push(row);
     }
-    renderFromRows(headers, rows);
-  });
+    return rows;
+  }
 
   /* Buttons */
   savePngBtn.addEventListener('click', () => Plotly.downloadImage(chartDiv, {format: 'png', width: 2000, height: 1200, filename: 'card-shuffles'}));
