@@ -68,6 +68,7 @@
     <button class="pill" id="saveSvg">Save SVG</button>
     <button class="pill" id="load114">Number 114</button>
     <button class="pill" id="loadFaro">Faro</button>
+    <button class="pill" id="loadRandom">Random Shuffle</button>
   </div>
 
   <div id="chart"></div>
@@ -89,6 +90,7 @@
   const saveSvgBtn = document.getElementById('saveSvg');
   const load114Btn = document.getElementById('load114');
   const loadFaroBtn = document.getElementById('loadFaro');
+  const loadRandomBtn = document.getElementById('loadRandom');
   const showAllBtn = document.getElementById('showAll');
   const hideAllBtn = document.getElementById('hideAll');
   const legendEl = document.getElementById('legend');
@@ -165,6 +167,32 @@
     }
 
     const headers = Array.from({length: 9}, (_, i) => `Shuffle${i}`); // match your Python names
+    const rows = buildRowsFromShuffles(shuffles, headers);
+    renderFromRows(headers, rows);
+  });
+
+  /* Random shuffle, initial plus 12 random steps, each step shuffles the previous */
+  loadRandomBtn.addEventListener('click', () => {
+    const suits = ['S','H','D','C'];
+    const ranks = ['A','2','3','4','5','6','7','8','9','10','J','Q','K'];
+    const base = [];
+    for (const s of suits) for (const r of ranks) base.push(`${r}${s}`);
+
+    function shuffleArray(arr) {
+      const a = arr.slice();
+      for (let i = a.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [a[i], a[j]] = [a[j], a[i]];
+      }
+      return a;
+    }
+
+    const shuffles = [base];
+    for (let i = 0; i < 12; i++) {
+      shuffles.push(shuffleArray(shuffles[shuffles.length - 1]));
+    }
+
+    const headers = Array.from({length: 13}, (_, i) => `Shuffle ${i}`);
     const rows = buildRowsFromShuffles(shuffles, headers);
     renderFromRows(headers, rows);
   });
