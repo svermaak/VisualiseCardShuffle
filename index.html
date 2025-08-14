@@ -17,7 +17,6 @@
 
     .pill { padding: 6px 10px; border: 1px solid #999; border-radius: 999px; background: transparent; cursor: pointer; }
 
-    /* Legend layout */
     .legend { display: grid; gap: 8px; }
     .legend-row {
       display: grid;
@@ -49,11 +48,10 @@
     .legend-item.off { opacity: .30; }
     .swatch { width: 22px; height: 0; border-top: 3px solid currentColor; }
 
-    /* Suit colors */
-    .C { color: #1f7a1f; }   /* clubs */
-    .D { color: #cc3333; }   /* diamonds */
-    .H { color: #cc33cc; }   /* hearts */
-    .S { color: #2a6bcc; }   /* spades */
+    .C { color: #1f7a1f; }
+    .D { color: #cc3333; }
+    .H { color: #cc33cc; }
+    .S { color: #2a6bcc; }
 
     .bottom-bar { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
   </style>
@@ -73,7 +71,6 @@
 
   <div id="chart"></div>
 
-  <!-- Custom legend, four rows, one per suit -->
   <div class="legend" id="legend"></div>
 
   <div class="bottom-bar">
@@ -107,11 +104,10 @@
   let xNumeric = [];
   let yTickText = [];
 
-  const labelToIndex = new Map();          // "K♥" -> trace index
-  const visibleState = new Map();          // "K♥" -> boolean
-  const suitToIndices = { C:[], D:[], H:[], S:[] }; // suit -> [trace indexes]
+  const labelToIndex = new Map();
+  const visibleState = new Map();
+  const suitToIndices = { C:[], D:[], H:[], S:[] };
 
-  /* Load CSV */
   fileInput.addEventListener('change', e => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -119,59 +115,57 @@
       complete: r => renderFromRows(r.meta.fields, r.data) });
   });
 
-  /* Number 114 generator, in browser */
-  load114Btn.addEventListener('click', () => {
-    const suits = ['S', 'D', 'C', 'H'];
+  // Monge shuffle, even index to bottom, odd index to top
+  function mongeShuffle(deck) {
+    const n = deck.length;
+    const out = new Array(n);
+    for (let i = 0; i < n; i++) {
+      const j = (i % 2 === 0) ? (n - 1 - Math.floor(i / 2)) : Math.floor(i / 2);
+      out[j] = deck[i];
+    }
+    return out;
+  }
+
+  // Build S D C H, ranks A..K
+  function buildDeckSDCH() {
+    const suits = ['S','D','C','H'];
     const ranks = ['A','2','3','4','5','6','7','8','9','10','J','Q','K'];
     const deck = [];
-    for (const suit of suits) for (const rank of ranks) deck.push(`${rank}${suit}`);
+    for (const s of suits) for (const r of ranks) deck.push(`${r}${s}`);
+    return deck;
+  }
 
-    function mark_shuffle(d) {
-      const left = [];
-      let toggle = true;
-      for (const card of d) {
-        if (toggle) left.unshift(card);
-        else left.push(card);
-        toggle = !toggle;
-      }
-      return left;
-    }
-
-    const shuffles = [deck];
-    for (let i = 0; i < 12; i++) shuffles.push(mark_shuffle(shuffles[shuffles.length - 1]));
-
-    const headers = Array.from({length: 13}, (_, i) => `Shuffle ${i}`);
+  // Number 114 generator, 12 iterations, headers Shuffle0..Shuffle12
+  load114Btn.addEventListener('click', () => {
+    const shuffles = [buildDeckSDCH()];
+    for (let i = 0; i < 12; i++) shuffles.push(mongeShuffle(shuffles[shuffles.length - 1]));
+    const headers = Array.from({length: 13}, (_, i) => `Shuffle${i}`);
     const rows = buildRowsFromShuffles(shuffles, headers);
     renderFromRows(headers, rows);
   });
 
-  /* Faro generator, in browser, perfect out faro, suits S H D C, 8 shuffles */
+  // Faro generator, perfect out faro, S H D C, 8 shuffles, headers Shuffle0..Shuffle8
   loadFaroBtn.addEventListener('click', () => {
-    const ranks = ['A','2','3','4','5','6','7','8','9','10','J','Q','K'];
     const suits = ['S','H','D','C'];
+    const ranks = ['A','2','3','4','5','6','7','8','9','10','J','Q','K'];
     const deck = [];
     for (const s of suits) for (const r of ranks) deck.push(`${r}${s}`);
 
     function faroShuffle(d) {
       const half = d.length >> 1;
       const out = [];
-      for (let i = 0; i < half; i++) {
-        out.push(d[i], d[i + half]);
-      }
+      for (let i = 0; i < half; i++) out.push(d[i], d[i + half]);
       return out;
     }
 
     const shuffles = [deck];
-    for (let i = 0; i < 8; i++) {
-      shuffles.push(faroShuffle(shuffles[shuffles.length - 1]));
-    }
-
-    const headers = Array.from({length: 9}, (_, i) => `Shuffle${i}`); // match your Python names
+    for (let i = 0; i < 8; i++) shuffles.push(faroShuffle(shuffles[shuffles.length - 1]));
+    const headers = Array.from({length: 9}, (_, i) => `Shuffle${i}`);
     const rows = buildRowsFromShuffles(shuffles, headers);
     renderFromRows(headers, rows);
   });
 
-  /* Random shuffle, initial plus 12 random steps, each step shuffles the previous */
+  // Random shuffle, 12 steps from S H D C base
   loadRandomBtn.addEventListener('click', () => {
     const suits = ['S','H','D','C'];
     const ranks = ['A','2','3','4','5','6','7','8','9','10','J','Q','K'];
@@ -188,11 +182,8 @@
     }
 
     const shuffles = [base];
-    for (let i = 0; i < 12; i++) {
-      shuffles.push(shuffleArray(shuffles[shuffles.length - 1]));
-    }
-
-    const headers = Array.from({length: 13}, (_, i) => `Shuffle ${i}`);
+    for (let i = 0; i < 12; i++) shuffles.push(shuffleArray(shuffles[shuffles.length - 1]));
+    const headers = Array.from({length: 13}, (_, i) => `Shuffle${i}`);
     const rows = buildRowsFromShuffles(shuffles, headers);
     renderFromRows(headers, rows);
   });
@@ -209,9 +200,12 @@
     return rows;
   }
 
-  /* Buttons */
-  savePngBtn.addEventListener('click', () => Plotly.downloadImage(chartDiv, {format: 'png', width: 2000, height: 1200, filename: 'card-shuffles'}));
-  saveSvgBtn.addEventListener('click', () => Plotly.downloadImage(chartDiv, {format: 'svg', width: 2000, height: 1200, filename: 'card-shuffles'}));
+  savePngBtn.addEventListener('click', () =>
+    Plotly.downloadImage(chartDiv, {format: 'png', width: 2000, height: 1200, filename: 'card-shuffles'})
+  );
+  saveSvgBtn.addEventListener('click', () =>
+    Plotly.downloadImage(chartDiv, {format: 'svg', width: 2000, height: 1200, filename: 'card-shuffles'})
+  );
   lwInput.addEventListener('input', () => restyleWidths());
   showAllBtn.addEventListener('click', () => setAllVisibility(true));
   hideAllBtn.addEventListener('click', () => setAllVisibility(false));
@@ -312,7 +306,7 @@
 
   function draw() {
     const layout = {
-      margin: { l: 90, r: 20, t: 20, b: 60 },  // will be adjusted by fitBottomMargin
+      margin: { l: 90, r: 20, t: 20, b: 60 },
       xaxis: {
         title: 'Shuffle Number',
         tickmode: 'array',
@@ -342,7 +336,6 @@
     Plotly.restyle(chartDiv, { 'line.width': w }, traces.map((_, i) => i));
   }
 
-  /* Legend */
   function buildLegend() {
     legendEl.innerHTML = '';
     for (const suit of SUITS) {
@@ -418,7 +411,6 @@
     }
   }
 
-  /* Auto fit bottom margin to the legend height */
   function fitBottomMargin() {
     const legendH = legendEl.offsetHeight || 0;
     const base = 40;
@@ -426,7 +418,6 @@
     Plotly.relayout(chartDiv, { 'margin.b': base + legendH + padding });
   }
 
-  /* Parsing helpers */
   function detectSuit(card) {
     const c = card.trim();
     const lc = c.toLowerCase();
